@@ -5,6 +5,7 @@ const AdmZip = require('adm-zip')
 const filesize = require('filesize')
 const pathname = require('path')
 const fs = require('fs')
+const { Readable } = require('stream');
 
 async function downloadAction(name, path) {
     const artifactClient = artifact.create()
@@ -247,9 +248,38 @@ async function main() {
             }
 
             if (skipUnpack) {
-                fs.mkdirSync(path, { recursive: true })
-                fs.writeFileSync(`${pathname.join(path, artifact.name)}.zip`, Buffer.from(zip.data), 'binary')
-                continue
+                fs.mkdirSync(path, { recursive: true });
+
+                // Create a writable stream for the output file
+                const outputFilePath = pathname.join(path, `${artifact.name}.zip`);
+                const fileStream = fs.createWriteStream(outputFilePath);
+
+                const chunkSize = 1024 * 1024; // Size of each chunk, e.g., 1 MB
+                let position = 0; // Current position in ArrayBuffer
+
+                const arrayBufferStream = new Readable({
+                    read() {
+                        while (position < zip.data.byteLength) {
+                            const end = Math.min(position + chunkSize, zip.data.byteLength);
+                            const chunk = Buffer.from(zip.data.slice(position, end));
+                            position = end;
+                            if (!this.push(chunk)) {
+                                return;
+                            }
+                        }
+                        this.push(null); // Signal end of stream
+                    }
+                });
+
+                arrayBufferStream.pipe(fileStream)
+                  .on('error', (err) => {
+                      console.error('Error while writing the file:', err);
+                  })
+                  .on('finish', () => {
+                      console.log('File write completed:', outputFilePath);
+                  });
+
+                continue;
             }
 
             const dir = name && !nameIsRegExp ? path : pathname.join(path, artifact.name)
